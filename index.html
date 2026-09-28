@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تحويل الصوت إلى نص</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#E8EEF1; --ink:#12202A; --muted:#5B6B76; --panel:#FFFFFF;
+    --line:#C9D5DB; --accent:#0E6B6F; --rec:#D93B3B;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0F1A21; --ink:#E6EEF2; --muted:#8FA2AE; --panel:#16252E; --line:#26404D; --accent:#4CC3C8; --rec:#FF6B6B; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Cairo',system-ui,sans-serif;min-height:100vh;display:flex;justify-content:center;padding:32px 16px}
+  main{width:100%;max-width:720px}
+  h1{font-size:2rem;font-weight:800;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  select{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+  .mic{width:72px;height:72px;border-radius:50%;border:0;background:var(--accent);color:#fff;cursor:pointer;display:grid;place-items:center;transition:background .2s, transform .1s}
+  .mic:active{transform:scale(.96)}
+  .mic svg{width:30px;height:30px;fill:currentColor}
+  .mic.on{background:var(--rec);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(217,59,59,.5)}100%{box-shadow:0 0 0 22px rgba(217,59,59,0)}}
+  @media (prefers-reduced-motion:reduce){.mic.on{animation:none}}
+  .status{color:var(--muted);font-size:.95rem}
+  #out{width:100%;min-height:280px;padding:16px;font:inherit;font-size:1.1rem;line-height:1.9;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);resize:vertical}
+  #out:focus,.mic:focus-visible,button:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .interim{color:var(--muted);min-height:1.9em;padding:4px 4px 0}
+  .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .btn{font:inherit;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  .warn{background:#FFF3CD;color:#5c4400;padding:12px;border-radius:10px;display:none;margin-bottom:16px}
+</style>
+</head>
+<body>
+<main>
+  <h1>تحويل الصوت إلى نص</h1>
+  <p class="sub">اضغطي على الميكروفون وابدأي الكلام، والنص هيظهر مباشرة.</p>
+  <div class="warn" id="warn">المتصفح ده مش بيدعم التعرف على الصوت. جرّبي Chrome أو Edge.</div>
+
+  <div class="bar">
+    <button class="mic" id="mic" aria-label="ابدأ التسجيل">
+      <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2z"/></svg>
+    </button>
+    <select id="lang" aria-label="اللغة">
+      <option value="ar-EG">العربية (مصر)</option>
+      <option value="ar-SA">العربية (السعودية)</option>
+      <option value="en-US">English (US)</option>
+      <option value="en-GB">English (UK)</option>
+    </select>
+    <span class="status" id="status">جاهز</span>
+  </div>
+
+  <textarea id="out" placeholder="النص هيظهر هنا، وتقدري تعدّلي عليه." dir="auto"></textarea>
+  <div class="interim" id="interim" dir="auto"></div>
+
+  <div class="actions">
+    <button class="btn" id="copy">نسخ النص</button>
+    <button class="btn" id="save">تحميل كملف txt</button>
+    <button class="btn" id="clear">مسح</button>
+  </div>
+</main>
+
+<script>
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const $ = id => document.getElementById(id);
+const mic = $('mic'), out = $('out'), interim = $('interim'), statusEl = $('status'), langSel = $('lang');
+let rec = null, listening = false;
+
+if (!SR) { $('warn').style.display = 'block'; mic.disabled = true; }
+
+function build() {
+  rec = new SR();
+  rec.lang = langSel.value;
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  rec.onresult = e => {
+    let live = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) {
+        out.value += (out.value && !out.value.endsWith(' ') ? ' ' : '') + t.trim();
+      } else live += t;
+    }
+    interim.textContent = live;
+  };
+  rec.onerror = e => {
+    const msg = {
+      'not-allowed': 'مسموحش بالميكروفون. فعّلي الإذن من إعدادات المتصفح.',
+      'no-speech': 'مسمعتش صوت.',
+      'audio-capture': 'مفيش ميكروفون متوصل.',
+      'network': 'مشكلة في الاتصال بالإنترنت.'
+    }[e.error] || 'حصل خطأ: ' + e.error;
+    statusEl.textContent = msg;
+    if (e.error === 'not-allowed' || e.error === 'audio-capture') stop();
+  };
+  // Chrome stops after silence; restart while the user still wants to record
+  rec.onend = () => { if (listening) { try { rec.start(); } catch(_){} } };
+}
+
+function start() {
+  build();
+  listening = true;
+  rec.start();
+  mic.classList.add('on');
+  mic.setAttribute('aria-label', 'إيقاف التسجيل');
+  statusEl.textContent = 'بسمعك...';
+  langSel.disabled = true;
+}
+function stop() {
+  listening = false;
+  if (rec) rec.stop();
+  mic.classList.remove('on');
+  mic.setAttribute('aria-label', 'ابدأ التسجيل');
+  interim.textContent = '';
+  statusEl.textContent = 'اتوقف';
+  langSel.disabled = false;
+}
+
+mic.onclick = () => listening ? stop() : start();
+
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText(out.value); statusEl.textContent = 'اتنسخ'; }
+  catch { out.select(); document.execCommand('copy'); statusEl.textContent = 'اتنسخ'; }
+};
+$('save').onclick = () => {
+  const blob = new Blob([out.value], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'transcript.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+$('clear').onclick = () => { out.value = ''; interim.textContent = ''; statusEl.textContent = 'اتمسح'; };
+</script>
+</body>
+</html>
